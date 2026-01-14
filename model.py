@@ -4,23 +4,17 @@ from pandas_datareader import data as pdr
 from sklearn.ensemble import GradientBoostingRegressor
 import matplotlib.pyplot as plt
 
-# ==========================
-# 1. CONFIG
-# ==========================
-#TICKERS = ["AAPL.US", "MSFT.US", "GOOG.US", "SPY.US", "TLT.US"]  # mix rising/falling
-#TICKERS = ["IBM.US", "INTC.US", "GE.US", "XLE.US", "TLT.US"]
-'''TICKERS = [
-    "F.US",   # long-duration bonds
-    "GE.US",   # rate sensitivity
-    "INTC.US",  # secular decline
-    "IBM.US",   # value trap
-    "XRX.US"    # legacy business
-]'''
-TICKERS = [
-    "SQQQ.US",   # 3x inverse Nasdaq
-    "SPXS.US",   # 3x inverse S&P 500
-    "UVXY.US"    # VIX decay product
-]
+# portfolio types in dictionary
+dic = {"Capital-Growth": ["AAPL.US", "MSFT.US", "GOOG.US", "SPY.US", "TLT.US"],
+       "Volatile-Growth": ["F.US", "GE.US", "INTC.US", "IBM.US", "XRX.US"],
+       "Capital-Decline": ["SQQQ.US", "SPXS.US", "UVXY.US"]
+       }
+
+# select portfolio type
+key = input("Select portfolio type (Capital-Growth, Volatile-Growth, Capital-Decline): ")
+if key not in dic:
+    raise ValueError("Invalid portfolio type")
+TICKERS = list(dic[key])
 START = "2020-01-01"
 END = "2024-01-01"
 
@@ -31,18 +25,13 @@ N_LAGS = 5  # number of lagged returns for trend
 
 np.random.seed(42)
 
-# ==========================
-# 2. DATA FETCH
-# ==========================
 def get_stock_data(ticker, start, end):
     data = pdr.DataReader(ticker, "stooq", start, end)
     data = data.sort_index()
     prices = data["Close"] if "Close" in data.columns else data["close"]
     return prices.dropna()
 
-# ==========================
-# 3. EVENT-TIME RETURNS
-# ==========================
+# only sample on events
 def event_time_returns(prices, eps):
     event_prices = [prices.iloc[0]]
     last_price = prices.iloc[0]
@@ -54,9 +43,7 @@ def event_time_returns(prices, eps):
     returns_event = np.diff(np.log(event_prices), prepend=np.log(event_prices[0]))
     return returns_event
 
-# ==========================
-# 4. PARTICLE FILTER
-# ==========================
+# particle filter for latent volatility estimation
 def particle_filter(returns_event):
     particles = np.random.normal(-3.0, 0.5, size=N_PARTICLES)
     weights = np.ones(N_PARTICLES) / N_PARTICLES
@@ -78,9 +65,6 @@ def particle_filter(returns_event):
         weights.fill(1.0/N_PARTICLES)
     return x_pf, x_pf_var
 
-# ==========================
-# 5. FEATURE ENGINEERING
-# ==========================
 def build_features(x_pf, x_pf_var, returns_event, n_lags=N_LAGS):
     T = len(returns_event) - 1  # number of feature rows
 
@@ -109,9 +93,7 @@ def build_features(x_pf, x_pf_var, returns_event, n_lags=N_LAGS):
 
     return X, y, rets, latent_var
 
-# ==========================
-# 6. BUILD DATASET
-# ==========================
+# setting up train and test data
 X_train_list, y_train_list = [], []
 test_data = []
 
@@ -132,15 +114,11 @@ for ticker in TICKERS:
 X_train = np.vstack(X_train_list)
 y_train = np.concatenate(y_train_list)
 
-# ==========================
-# 7. TRAIN MODEL
-# ==========================
+# training data using Gradient Boosting Regressor
 model = GradientBoostingRegressor(n_estimators=300, max_depth=3, random_state=42)
 model.fit(X_train, y_train)
 
-# ==========================
-# 8. PORTFOLIO BACKTEST
-# ==========================
+
 strategy_returns, buy_hold_returns = [], []
 
 min_len = min(len(d["rets_test"]) for d in test_data)
@@ -163,13 +141,11 @@ bh_portfolio = np.mean(buy_hold_returns, axis=0)
 cum_strategy = np.cumsum(strategy_portfolio)
 cum_bh = np.cumsum(bh_portfolio)
 
-# ==========================
-# 9. PLOT
-# ==========================
+# plots
 plt.figure(figsize=(12,5))
 plt.plot(cum_bh, label="Buy & Hold (Equal-Weight)", alpha=0.6)
 plt.plot(cum_strategy, label="PF + Dynamics Portfolio (GBR Expected Return)", linewidth=2)
-plt.title("Capital-Decline Portfolio: Strategy vs Buy & Hold")
+plt.title(key+" Portfolio: Strategy vs Buy & Hold")
 plt.xlabel("Event Index (Test)")
 plt.ylabel("Cumulative Log Return")
 plt.legend()
